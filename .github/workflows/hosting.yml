@@ -3,61 +3,35 @@ name: Deploy to Firebase Hosting
 on:
   push:
     branches:
-      - '**'   # すべてのブランチで実行
-
-concurrency:
-  # 同じブランチの古いジョブはキャンセル（無駄なビルドを防止）
-  group: deploy-${{ github.ref }}
-  cancel-in-progress: true
+      - main
 
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: app   # Vite プロジェクトのルート
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Use Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
-          cache: 'npm'
-          cache-dependency-path: app/package-lock.json
+          node-version: 20
 
-      - name: Install
-        run: npm ci
+      - name: Install dependencies
+        run: |
+          cd app
+          npm ci
 
       - name: Build
-        run: npm run build
+        run: |
+          cd app
+          npm run build
 
-      # main 以外：プレビューへ（URL を出力）
-      - name: Deploy to Firebase Hosting (preview for non-main)
-        if: github.ref != 'refs/heads/main'
+      - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
-          repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_KAYAK_GOGO }}'
-          projectId: kayak-gogo
-          channelId: ${{ github.ref_name }}   # ブランチ名のプレビューを作成
-          expires: 7d                         # 7日で自動削除
-          entryPoint: ./                      # firebase.json がリポジトリ直下にある
-        env:
-          FIREBASE_CLI_EXPERIMENTS: webframeworks
-
-      # main：本番へ
-      - name: Deploy to Firebase Hosting (production for main)
-        if: github.ref == 'refs/heads/main'
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_KAYAK_GOGO }}'
-          projectId: kayak-gogo
+          repoToken: "${{ secrets.GITHUB_TOKEN }}"
+          firebaseServiceAccount: "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}"
           channelId: live
-          entryPoint: ./                      # firebase.json がリポジトリ直下
-        env:
-          FIREBASE_CLI_EXPERIMENTS: webframeworks
+          projectId: kayak-gogo
