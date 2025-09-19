@@ -1,0 +1,9 @@
+[
+  { "id": "katsuura", "name": "勝浦港", "lat": 35.1534, "lon": 140.3120 },
+  { "id": "kazusa_minato", "name": "上総湊漁港", "lat": 35.2019, "lon": 139.8129 },
+  { "id": "tateyama_port", "name": "館山港", "lat": 34.9890, "lon": 139.8670 },
+  { "id": "nemoto", "name": "根本港", "lat": 34.6740, "lon": 139.9050 },
+  { "id": "chikura", "name": "千倉港", "lat": 34.9875, "lon": 139.8707 },
+  { "id": "wada_port", "name": "和田漁港", "lat": 34.9101, "lon": 139.9195 },
+  { "id": "shiraham_nemoto", "name": "白浜 根本近辺", "lat": 34.6635, "lon": 139.9310 }
+]

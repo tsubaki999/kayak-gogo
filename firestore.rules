@@ -1,0 +1,17 @@
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Public read presets
+    match /presets/{doc} { allow read: if true; allow write: if false; }
+    // User settings (auth required)
+    match /users/{uid}/settings/{doc} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    // Anonymous logs: write-only
+    match /logs/{doc} {
+      allow create: if true;
+      allow read, update, delete: if false;
+    }
+  }
+}

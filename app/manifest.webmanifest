@@ -1,0 +1,10 @@
+
+{
+  "name": "出艇判断チェッカー",
+  "short_name": "Kayak Go/No-Go",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#137333",
+  "icons": []
+}

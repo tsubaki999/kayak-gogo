@@ -1,0 +1,16 @@
+{
+  "vars": {
+    "wind_ms": 5.8,
+    "wind_dir_deg": 50,
+    "wave_h_m": 0.8,
+    "swell_h_m": 0.6,
+    "swell_tp_s": 8,
+    "rain_mmph": 1.2,
+    "visibility_km": 10,
+    "thunder": false,
+    "advisory": {
+      "gale": false,
+      "thunder": false
+    }
+  }
+}
