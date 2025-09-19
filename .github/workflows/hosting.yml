@@ -1,0 +1,45 @@
+name: Deploy to Firebase Hosting
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install deps (app)
+        working-directory: app
+        run: npm ci
+
+      - name: Build (app)
+        working-directory: app
+        run: npm run build
+
+      - name: Preview deploy (PR)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KAYAK_GOGO }}
+          projectId: kayak-gogo
+
+      - name: Deploy to live (main)
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KAYAK_GOGO }}
+          projectId: kayak-gogo
+          channelId: live
