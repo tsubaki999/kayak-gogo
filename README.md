@@ -46,3 +46,10 @@ firestore.rules
 ## 変更点（必要なら）
 - Firebase Config は `app/src/firebase.ts` に記入（本番時）
 - Hosting rewrite は `firebase.json` の `/api/judge` を Functions に転送
+
+# kayak-gogo
+
+カヤック出艇判断チェッカー
+
+## 更新テスト
+この行は GitHub Actions 自動デプロイの確認用です。
