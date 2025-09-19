@@ -2,36 +2,61 @@ name: Deploy to Firebase Hosting
 
 on:
   push:
-    branches:
-      - main
+    branches: ["**"]        # すべてのブランチ
+  pull_request:              # PR 作成/更新/再オープン時も走らせる
+    types: [opened, synchronize, reopened]
 
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
 
+    # 同一ブランチの並行デプロイを抑止（途中の古いジョブはキャンセル）
+    concurrency:
+      group: hosting-${{ github.ref }}
+      cancel-in-progress: true
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "20"     # Firebase CLI v14+ 要件満たす
 
-      - name: Install dependencies
-        run: |
-          cd app
-          npm ci
+      - name: Install deps (app)
+        working-directory: app
+        run: npm ci
 
-      - name: Build
-        run: |
-          cd app
-          npm run build
+      - name: Build (app)
+        working-directory: app
+        run: npm run build
 
-      - name: Deploy to Firebase Hosting
+      # ====== Firebase Hosting デプロイ ======
+      # 本番（mainブランチの push）
+      - name: Deploy to LIVE (main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
-          repoToken: "${{ secrets.GITHUB_TOKEN }}"
-          firebaseServiceAccount: "${{ secrets.FIREBASE_SERVICE_ACCOUNT }}"
-          channelId: live
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           projectId: kayak-gogo
+          channelId: live           # 明示（=本番）
+          target: default           # 必要なら firebase.json の target 名に合わせて変更
+          entryPoint: ./            # firebase.json があるルート
+
+      # プレビュー（PR または main 以外のブランチ）
+      - name: Deploy to PREVIEW (PR / non-main)
+        if: |
+          github.event_name == 'pull_request' ||
+          (github.event_name == 'push' && github.ref != 'refs/heads/main')
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}            # PR に自動コメントします
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: kayak-gogo
+          # PR があれば PR番号、それ以外はブランチ名でチャンネル作成
+          channelId: ${{ github.event.pull_request.number || github.ref_name }}
+          expires: 7d                                        # プレビューURLの有効期限
+          target: default
+          entryPoint: ./
