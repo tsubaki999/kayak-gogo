@@ -1,20 +1,22 @@
 // app/src/App.tsx
 import React, { useEffect, useMemo, useState } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+
 import { judge, Thresholds } from "./risk";
 import mockNormal from "./mock_kannonzaki.json";
 import mockStorm from "./mock_storm.json";
 import { ensurePresets, loadPresets, saveLog } from "./fs";
-import { postJudge, UsedVars } from "./http";
-import MapPicker from "./MapPicker";
+import { UsedVars } from "./http"; // ← postJudge は使わない
 import { readParams, writeParams } from "./qparams";
+
+import MapPicker from "./MapPicker";
 import SpotsLayer from "./SpotsLayer";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
 import WindyEmbed from "./WindyEmbed";
 import SpotsPanel from "./SpotsPanel";
-import spots from "./spots.json"; // resolveJsonModule: true が必要
+import spots from "./spots.json";
 
-// Leaflet のデフォルトアイコン（Vite 対策）
+// Leaflet のデフォルトアイコンを修正（Vite でパスが崩れる対策）
 delete (L.Icon.Default.prototype as any)._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: "/marker-icon-2x.png",
@@ -38,27 +40,33 @@ export default function App() {
   const start = readParams();
   const [lat, setLat] = useState(start.lat ?? 35.249);
   const [lon, setLon] = useState(start.lon ?? 139.722);
-  const [time, setTime] = useState(start.t ?? new Date().toISOString().slice(0, 16));
+  const [time, setTime] = useState(
+    start.t ?? new Date().toISOString().slice(0, 16)
+  ); // yyyy-mm-ddThh:mm
   const [presets, setPresets] = useState<PresetDoc[]>([]);
   const [presetId, setPresetId] = useState(start.preset ?? "inner-bay");
 
   // ▼ しきい値・モード
   const [th, setTh] = useState(DEFAULT_TH);
   const [mode, setMode] = useState<"normal" | "storm">("normal");
-  const [serverMode, setServerMode] = useState(false);
-  const [result, setResult] = useState<{ label: string; score: number; reasons: string[] } | null>(null);
+  const [result, setResult] =
+    useState<{ label: "OK" | "注意" | "中止"; score: number; reasons: string[] } | null>(null);
   const [usedVars, setUsedVars] = useState<UsedVars | null>(null);
 
-  // ▼ Windy 表示オーバーレイ
+  // ▼ 予報レイヤー
   const [overlay, setOverlay] = useState<"wind" | "waves" | "rain" | "swell" | "gust">("wind");
 
-  // ▼ スポットの判定状態（マーカー色分けに利用）
+  // ▼ UI 折りたたみ
+  const [showThresholds, setShowThresholds] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
+
+  // ▼ 地図タブ（スポット地図 / 予報）
+  const [mapMode, setMapMode] = useState<"picker" | "forecast">("picker");
+
+  // ▼ スポットの判定状態（Map上マーカー色分け用）
   const [spotStatuses, setSpotStatuses] = useState<Record<string, "OK" | "注意" | "中止">>({});
 
-  // ▼ しきい値スライダーの折りたたみ（← Hook は関数内に！）
-  const [showThresholds, setShowThresholds] = useState(false);
-
-  // 初期化：プリセット投入＆取得
+  // プリセット投入＆取得
   useEffect(() => {
     ensurePresets()
       .then(loadPresets)
@@ -72,7 +80,7 @@ export default function App() {
     if (p) setTh(p.thresholds);
   }, [presetId, presets]);
 
-  // URL 同期
+  // URL同期
   useEffect(() => {
     writeParams({ lat, lon, t: time, preset: presetId });
   }, [lat, lon, time, presetId]);
@@ -81,37 +89,23 @@ export default function App() {
   const vars = mode === "storm" ? (mockStorm as any).vars : (mockNormal as any).vars;
   const local = useMemo(() => judge(vars, th), [vars, th]);
 
-  // 判定実行
+  // 判定実行：常にローカル評価（Cloud Functions UI は撤去）
   async function runJudge() {
-    let r: { label: string; score: number; reasons: string[] };
-
-    if (serverMode) {
-      const res = await postJudge({
-        lat,
-        lon,
-        at: new Date(time).toISOString(),
-        presetId,
-        thresholds: th,
-        save: true,
-      });
-      r = res.result;
-      setUsedVars(res.usedVars ?? null);
-    } else {
-      r = local;
-      setUsedVars({
-        wind_ms: Number(vars.wind ?? 0),
-        wave_h_m: Number(vars.wave ?? 0),
-        swell_h_m: Number(vars.swellH ?? 0),
-        swell_tp_s: Number(vars.swellTp ?? 0),
-        rain_mmph: Number(vars.rain ?? 0),
-        visibility_km: Number(vars.visibility ?? 20),
-        thunder: !!vars.thunder,
-        advisory: vars.advisory ?? null,
-      });
-    }
-
+    const r = local;
+    setUsedVars({
+      wind_ms: Number(vars.wind ?? 0),
+      wave_h_m: Number(vars.wave ?? 0),
+      swell_h_m: Number(vars.swellH ?? 0),
+      swell_tp_s: Number(vars.swellTp ?? 0),
+      rain_mmph: Number(vars.rain ?? 0),
+      visibility_km: Number(vars.visibility ?? 20),
+      thunder: !!vars.thunder,
+      advisory: vars.advisory ?? null,
+    });
     setResult(r);
-    saveLog(presetId, lat, lon, time, r).catch((err) => console.error("ログ保存に失敗しました:", err));
+    saveLog(presetId, lat, lon, time, r).catch((err) =>
+      console.error("ログ保存に失敗しました:", err)
+    );
   }
 
   const r = result || local;
@@ -120,57 +114,162 @@ export default function App() {
     <main style={{ padding: 16, maxWidth: 560, margin: "0 auto" }}>
       <h1>出艇判断チェッカー</h1>
 
-      {/* 地点 & 時刻 */}
-      <div style={{ display: "grid", gap: 12, margin: "12px 0" }}>
-        <MapPicker lat={lat} lon={lon} onPick={(a, b) => { setLat(a); setLon(b); }}>
+      {/* 地図タブ */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+        <button
+          onClick={() => setMapMode("picker")}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 8,
+            border: "1px solid #ccc",
+            background: mapMode === "picker" ? "#eef6ff" : "#fff",
+            fontWeight: mapMode === "picker" ? 700 : 400,
+          }}
+        >
+          スポット地図
+        </button>
+        <button
+          onClick={() => setMapMode("forecast")}
+          style={{
+            padding: "8px 12px",
+            borderRadius: 8,
+            border: "1px solid #ccc",
+            background: mapMode === "forecast" ? "#eef6ff" : "#fff",
+            fontWeight: mapMode === "forecast" ? 700 : 400,
+          }}
+        >
+          予報
+        </button>
+        {mapMode === "forecast" && (
+          <div style={{ marginLeft: "auto" }}>
+            <label style={{ fontSize: 13, opacity: 0.9, marginRight: 8 }}>Windy表示:</label>
+            <select value={overlay} onChange={(e) => setOverlay(e.target.value as any)}>
+              <option value="wind">風（ベクトル）</option>
+              <option value="waves">波浪</option>
+              <option value="swell">うねり</option>
+              <option value="rain">降水</option>
+              <option value="gust">ガスト</option>
+            </select>
+          </div>
+        )}
+      </div>
+
+      {/* 地図本体 */}
+      {mapMode === "picker" ? (
+        <MapPicker
+          lat={lat}
+          lon={lon}
+          onPick={(a, b) => {
+            setLat(a);
+            setLon(b);
+          }}
+        >
+          {/* 候補地点マーカー */}
           <SpotsLayer
             spots={spots as any}
             statuses={spotStatuses}
-            onSelect={(a, b) => { setLat(a); setLon(b); }}
+            onSelect={(a, b) => {
+              setLat(a);
+              setLon(b);
+            }}
           />
         </MapPicker>
+      ) : (
+        <WindyEmbed lat={lat} lon={lon} zoom={9} overlay={overlay} height={360} />
+      )}
 
-        <div style={{ display: "flex", gap: 12 }}>
-          <div style={{ flex: 1 }}>
-            <label style={{ display: "block", fontSize: 12, opacity: 0.7 }}>緯度</label>
-            <input value={lat.toFixed(5)} onChange={(e) => setLat(parseFloat(e.target.value || "0"))} style={{ width: "100%" }} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <label style={{ display: "block", fontSize: 12, opacity: 0.7 }}>経度</label>
-            <input value={lon.toFixed(5)} onChange={(e) => setLon(parseFloat(e.target.value || "0"))} style={{ width: "100%" }} />
-          </div>
+      {/* 日時 + 詳細設定（緯度/経度） */}
+      <div style={{ display: "grid", gap: 12, margin: "12px 0" }}>
+        <div>
+          <label style={{ display: "block", fontSize: 12, opacity: 0.7 }}>日時</label>
+          <input
+            type="datetime-local"
+            value={time}
+            onChange={(e) => setTime(e.target.value)}
+            style={{ width: "100%" }}
+          />
         </div>
 
         <div>
-          <label style={{ display: "block", fontSize: 12, opacity: 0.7 }}>日時</label>
-          <input type="datetime-local" value={time} onChange={(e) => setTime(e.target.value)} style={{ width: "100%" }} />
+          <button
+            onClick={() => setShowDetails(!showDetails)}
+            style={{
+              fontSize: 12,
+              padding: "4px 8px",
+              borderRadius: 6,
+              border: "1px solid #ccc",
+              background: "#f8f8f8",
+              cursor: "pointer",
+            }}
+          >
+            {showDetails ? "詳細設定を閉じる ▲" : "詳細設定（緯度・経度 ほか）を開く ▼"}
+          </button>
         </div>
+
+        {showDetails && (
+          <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: "block", fontSize: 12, opacity: 0.7 }}>緯度</label>
+              <input
+                value={lat.toFixed(5)}
+                onChange={(e) => setLat(parseFloat(e.target.value || "0"))}
+                style={{ width: "100%" }}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: "block", fontSize: 12, opacity: 0.7 }}>経度</label>
+              <input
+                value={lon.toFixed(5)}
+                onChange={(e) => setLon(parseFloat(e.target.value || "0"))}
+                style={{ width: "100%" }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* プリセットとモード */}
       <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
         <select value={presetId} onChange={(e) => setPresetId(e.target.value)}>
           {presets.map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
           ))}
         </select>
 
-        <label><input type="radio" checked={mode === "normal"} onChange={() => setMode("normal")} /> 通常</label>
-        <label><input type="radio" checked={mode === "storm"} onChange={() => setMode("storm")} /> 時化</label>
-
-        <label style={{ marginLeft: "auto" }}>
-          <input type="checkbox" checked={serverMode} onChange={(e) => setServerMode(e.target.checked)} />
-          Cloud Functionsで判定
+        <label>
+          <input
+            type="radio"
+            checked={mode === "normal"}
+            onChange={() => setMode("normal")}
+          />{" "}
+          通常
+        </label>
+        <label>
+          <input
+            type="radio"
+            checked={mode === "storm"}
+            onChange={() => setMode("storm")}
+          />{" "}
+          時化
         </label>
       </div>
 
-      {/* しきい値スライダー（折りたたみ） */}
+      {/* しきい値スライダー（折りたたみ式） */}
       <section style={{ marginTop: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <h3 style={{ margin: 0 }}>しきい値</h3>
           <button
-            onClick={() => setShowThresholds((v) => !v)}
-            style={{ fontSize: 12, padding: "4px 8px", borderRadius: 6, border: "1px solid #ccc", background: "#f8f8f8", cursor: "pointer" }}
+            onClick={() => setShowThresholds(!showThresholds)}
+            style={{
+              fontSize: 12,
+              padding: "4px 8px",
+              borderRadius: 6,
+              border: "1px solid #ccc",
+              background: "#f8f8f8",
+              cursor: "pointer",
+            }}
           >
             {showThresholds ? "閉じる ▲" : "開く ▼"}
           </button>
@@ -179,10 +278,36 @@ export default function App() {
 
         {showThresholds && (
           <div style={{ marginTop: 8 }}>
-            <Slider label="最大 風速 OK (m/s)" value={th.maxWindOk} min={2} max={10} onChange={(v) => setTh({ ...th, maxWindOk: v })} />
-            <Slider label="最大 波高 OK (m)" value={th.maxWaveOk} min={0.3} max={1.8} step={0.1} onChange={(v) => setTh({ ...th, maxWaveOk: v })} />
-            <Slider label="最大 うねり高 OK (m)" value={th.maxSwellOk} min={0.5} max={2.0} step={0.1} onChange={(v) => setTh({ ...th, maxSwellOk: v })} />
-            <Slider label="最小 うねり周期 OK (s)" value={th.minSwellTpOk} min={6} max={12} onChange={(v) => setTh({ ...th, minSwellTpOk: v })} />
+            <Slider
+              label="最大 風速 OK (m/s)"
+              value={th.maxWindOk}
+              min={2}
+              max={10}
+              onChange={(v: number) => setTh({ ...th, maxWindOk: v })}
+            />
+            <Slider
+              label="最大 波高 OK (m)"
+              value={th.maxWaveOk}
+              min={0.3}
+              max={1.8}
+              step={0.1}
+              onChange={(v: number) => setTh({ ...th, maxWaveOk: v })}
+            />
+            <Slider
+              label="最大 うねり高 OK (m)"
+              value={th.maxSwellOk}
+              min={0.5}
+              max={2.0}
+              step={0.1}
+              onChange={(v: number) => setTh({ ...th, maxSwellOk: v })}
+            />
+            <Slider
+              label="最小 うねり周期 OK (s)"
+              value={th.minSwellTpOk}
+              min={6}
+              max={12}
+              onChange={(v: number) => setTh({ ...th, minSwellTpOk: v })}
+            />
           </div>
         )}
       </section>
@@ -192,25 +317,13 @@ export default function App() {
         判定する
       </button>
 
-      <ResultCard label={r.label as any} score={r.score} reasons={r.reasons} />
+      <ResultCard label={r.label} score={r.score} reasons={r.reasons} />
 
-      {/* 実測値カード */}
+      {/* 実測値一覧（しきい値との比較色分け） */}
       {usedVars && <ObservedCard v={usedVars} th={th} />}
 
-      {/* Windy + 周辺スポット */}
+      {/* 周辺スポットの一括判定（常時表示） */}
       <section style={{ marginTop: 12 }}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-          <strong>天気予報レイヤー（Windy）</strong>
-          <select value={overlay} onChange={(e) => setOverlay(e.target.value as any)}>
-            <option value="wind">風（ベクトル）</option>
-            <option value="waves">波浪</option>
-            <option value="swell">うねり</option>
-            <option value="rain">降水</option>
-            <option value="gust">ガスト</option>
-          </select>
-        </div>
-        <WindyEmbed lat={lat} lon={lon} zoom={9} overlay={overlay} height={360} />
-
         <SpotsPanel
           center={{ lat, lon }}
           atISO={new Date(time).toISOString()}
@@ -221,11 +334,14 @@ export default function App() {
       </section>
 
       <div style={{ marginTop: 8 }}>
-        <small style={{ opacity: 0.8 }}>このページURLを共有すると、地点/時刻/プリセットが復元されます。</small>
+        <small style={{ opacity: 0.8 }}>
+          このページURLを共有すると、地点/時刻/プリセットが復元されます。
+        </small>
       </div>
 
       <small style={{ opacity: 0.7, display: "block", marginTop: 8 }}>
-        データ: {mode === "storm" ? "mock_storm" : "mock_normal"} / lat {lat.toFixed(3)}, lon {lon.toFixed(3)} / {time}
+        データ: {mode === "storm" ? "mock_storm" : "mock_normal"} / lat {lat.toFixed(3)}, lon{" "}
+        {lon.toFixed(3)} / {time}
       </small>
     </main>
   );
@@ -252,7 +368,15 @@ function Slider({
         <span>{label}</span>
         <b>{value}</b>
       </div>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(parseFloat(e.target.value))} style={{ width: "100%" }} />
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        style={{ width: "100%" }}
+      />
     </div>
   );
 }
@@ -269,22 +393,44 @@ function ResultCard({
   const bg = label === "OK" ? "#e6f7e8" : label === "注意" ? "#fff6e5" : "#ffebee";
   const fg = label === "OK" ? "#137333" : label === "注意" ? "#8a6d00" : "#b00020";
   return (
-    <div style={{ background: bg, border: `1px solid ${fg}`, borderRadius: 12, padding: 16, margin: "12px 0" }}>
+    <div
+      style={{
+        background: bg,
+        border: `1px solid ${fg}`,
+        borderRadius: 12,
+        padding: 16,
+        margin: "12px 0",
+      }}
+    >
       <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
         <span style={{ fontSize: 24, color: fg, fontWeight: 700 }}>{label}</span>
         <span style={{ opacity: 0.7 }}>スコア {score}</span>
       </div>
       <ul style={{ margin: "8px 0 0 18px" }}>
-        {reasons.map((r, i) => (<li key={i}>{r}</li>))}
+        {reasons.map((r, i) => (
+          <li key={i}>{r}</li>
+        ))}
       </ul>
     </div>
   );
 }
 
+// 実測値カード（しきい値と比較して色分け）
 function ObservedCard({ v, th }: { v: UsedVars; th: Thresholds }) {
-  const judgeColor = (ok: boolean, warn = false) => (ok ? "#137333" : warn ? "#8a6d00" : "#b00020");
+  const judgeColor = (ok: boolean, warn = false) =>
+    ok ? "#137333" : warn ? "#8a6d00" : "#b00020";
   const pill = (text: string, ok: boolean, warn = false) => (
-    <span style={{ color: judgeColor(ok, warn), background: ok ? "#e6f7e8" : warn ? "#fff6e5" : "#ffebee", border: `1px solid ${judgeColor(ok, warn)}`, borderRadius: 999, padding: "2px 8px", fontSize: 12, fontWeight: 700 }}>
+    <span
+      style={{
+        color: judgeColor(ok, warn),
+        background: ok ? "#e6f7e8" : warn ? "#fff6e5" : "#ffebee",
+        border: `1px solid ${judgeColor(ok, warn)}`,
+        borderRadius: 999,
+        padding: "2px 8px",
+        fontSize: 12,
+        fontWeight: 700,
+      }}
+    >
       {text}
     </span>
   );
@@ -313,13 +459,30 @@ function ObservedCard({ v, th }: { v: UsedVars; th: Thresholds }) {
   ] as const;
 
   return (
-    <div style={{ background: "#f7f9fb", border: "1px solid #dce3eb", borderRadius: 12, padding: 16, marginTop: 8 }}>
+    <div
+      style={{
+        background: "#f7f9fb",
+        border: "1px solid #dce3eb",
+        borderRadius: 12,
+        padding: 16,
+        marginTop: 8,
+      }}
+    >
       <div style={{ display: "flex", justifyContent: "space-between" }}>
         <strong>使用した実測値</strong>
         <small style={{ opacity: 0.7 }}>しきい値と比較して色分け表示</small>
       </div>
 
-      <div style={{ marginTop: 8, display: "grid", gridTemplateColumns: "140px 1fr 1fr", rowGap: 8, columnGap: 12, alignItems: "center" }}>
+      <div
+        style={{
+          marginTop: 8,
+          display: "grid",
+          gridTemplateColumns: "140px 1fr 1fr",
+          rowGap: 8,
+          columnGap: 12,
+          alignItems: "center",
+        }}
+      >
         {rows.map((r) => (
           <React.Fragment key={r.k}>
             <div style={{ opacity: 0.8 }}>{r.k}</div>
