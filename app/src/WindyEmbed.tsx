@@ -1,11 +1,15 @@
 import React, { useMemo } from "react";
 
 type Props = {
-  lat: number;
+  lat: number;                       // デフォルト中心
   lon: number;
-  zoom?: number;
-  overlay?: "wind" | "waves" | "rain" | "swell" | "gust";
-  height?: number; // px
+  zoom?: number;                     // 非フォーカス時のズーム
+  overlay?: "wind" | "waves" | "swell" | "rain" | "gust";
+  height?: number | string;          // 例: 360 / "70vh" / "calc(70vh + 240px)"
+  // リストから選択中スポット（ある場合は中心にしてマーカー表示＆ズームイン）
+  focusLat?: number;
+  focusLon?: number;
+  focusZoom?: number;                // フォーカス時ズーム（既定 11）
 };
 
 export default function WindyEmbed({
@@ -13,46 +17,58 @@ export default function WindyEmbed({
   lon,
   zoom = 9,
   overlay = "wind",
-  height = 320,
+  height = "70vh",
+  focusLat,
+  focusLon,
+  focusZoom = 11,
 }: Props) {
-  // Windyの埋め込みURL
-  // ドキュメント: https://www.windy.com/embedding
+  const cssHeight = typeof height === "number" ? `${height}px` : height ?? "70vh";
+
+  // フォーカスがあればそちらを優先
+  const centerLat = focusLat ?? lat;
+  const centerLon = focusLon ?? lon;
+  const marker = focusLat != null && focusLon != null;
+  const usedZoom = marker ? Math.max(zoom, focusZoom) : zoom;
+
   const src = useMemo(() => {
-    const params = new URLSearchParams({
-      lat: lat.toFixed(4),
-      lon: lon.toFixed(4),
-      zoom: String(zoom),
-      overlay,
-      // 使いやすいオプション色々（表示UIなど）
-      level: "surface",
-      menu: "true",
-      message: "true",
-      marker: `${lat.toFixed(4)},${lon.toFixed(4)}`,
-      calendar: "now",
-      pressure: "true",
-      type: "map",
-      location: "coordinates",
-      detail: "true",
-      detailLat: lat.toFixed(4),
-      detailLon: lon.toFixed(4),
-      metricWind: "m/s",
-      metricTemp: "°C",
-      metricRain: "mm",
-      metricWaves: "m",
-    });
-    return `https://embed.windy.com/embed2.html?${params.toString()}`;
-  }, [lat, lon, zoom, overlay]);
+    const u = new URL("https://embed.windy.com/embed2.html");
+    const q = u.searchParams;
+    q.set("lat", String(centerLat));
+    q.set("lon", String(centerLon));
+    q.set("zoom", String(usedZoom));
+    q.set("level", "surface");
+    q.set("overlay", overlay);
+    q.set("menu", "");
+    q.set("message", "true");
+    q.set("marker", marker ? "true" : "false");
+    q.set("calendar", "now");
+    q.set("pressure", "true");
+    q.set("type", "map");
+    q.set("location", "coordinates");
+    q.set("detail", "true");
+    q.set("detailLat", String(centerLat));   // 予報バーも中心に合わせる
+    q.set("detailLon", String(centerLon));
+    q.set("metricWind", "default");
+    q.set("metricTemp", "default");
+    q.set("forecast", "1");
+    q.set("product", "ecmwf");
+    return u.toString();
+  }, [centerLat, centerLon, usedZoom, overlay, marker]);
 
   return (
-    <div style={{ borderRadius: 12, overflow: "hidden", border: "1px solid #dce3eb" }}>
-      <iframe
-        title="Windy Forecast"
-        width="100%"
-        height={height}
-        src={src}
-        frameBorder="0"
-        referrerPolicy="no-referrer"
-      />
-    </div>
+    <iframe
+      key={src}               // パラメータ変更時に確実に再読込
+      src={src}
+      width="100%"
+      height={cssHeight}
+      style={{
+        borderRadius: 12,
+        border: "1px solid #e5e7eb",
+        minHeight: "600px",   // ← ★ 地図エリアを必ず確保
+        display: "block",     // ← ★ 確実にブロック描画
+      }}
+      frameBorder="0"
+      title="windy-forecast"
+    />
   );
 }
